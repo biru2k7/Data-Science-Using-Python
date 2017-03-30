@@ -1,0 +1,234 @@
+// Dense Vectors
+// MLlib vectors are local (stored in one machine), can be dense or sparce, indicies start with zero, all the elements should be 
+// importing both Vector, Vectors from mllib and using Vectors.dense() to create a dense vector
+import org.apache.spark.mllib.linalg.{Vector, Vectors}
+Vectors.dense(1.0, 22.3,677.3,0.0)
+res3: org.apache.spark.mllib.linalg.Vector = [1.0,22.3,677.3,0.0]
+
+// Sparce Vectors
+Vectors.sparse(3, Array(0,2), Array(44.0, 55.0)) // creating sparce vector using Array(), backed by two arrays 1st array contains indices (with non zero values) and 2nd resp. values
+Vectors.sparse(3, Seq((0,44.0), (2,55.0)))       // creating sparce vector using Seq(), here we give seq of tuples (indices, value) for all non zero entities
+
+res10: org.apache.spark.mllib.linalg.Vector = (3,[0,2],[44.0,55.0])
+res11: org.apache.spark.mllib.linalg.Vector = (3,[0,2],[44.0,55.0])
+
+// Labeled Points (a vector associated with a lebel/response)
+// Used in supervised machine learning algorithms, must be double so that can be used in both classification and regression
+// For classification it should be 0(-ve), 1(+ve) 
+import org.apache.spark.mllib.regression.LabeledPoint
+LabeledPoint(1.0, Vectors.dense(1.0, 22.3,677.3,0.0))
+
+import org.apache.spark.mllib.regression.LabeledPoint
+res20: org.apache.spark.mllib.regression.LabeledPoint = (1.0,[1.0,22.3,677.3,0.0])
+
+//Matrices
+// natural extension of vectors, 0 based row column indices with double values
+// local matices stored in a single machine and MLlib matrices can be either dense or sparce
+// Matrices are filled column major order
+import org.apache.spark.mllib.linalg.{Matrix, Matrices}
+Matrices.dense(3,2, Array(1,3,5, 2,4,6))
+
+import org.apache.spark.mllib.linalg.{Matrix, Matrices}
+res26: org.apache.spark.mllib.linalg.Matrix = 
+1.0  2.0  
+3.0  4.0  
+5.0  6.0  
+
+// Sparce Matrices are stored in csc (compressed sparce column format)
+// (nrow, ncol, Array())
+val m = Matrices.sparse(5 , 4, Array(0, 0, 1, 2, 2) , Array(1,3), Array(14, 25))
+
+m: org.apache.spark.mllib.linalg.Matrix = 
+5 x 4 CSCMatrix
+(1,1) 14.0
+(3,2) 25.0
+
+// Distributed matrices (stored in one or more RDDs distributed across spark cluster nodes)
+// Rows and columns indices are of types Long to allow big dimentionality and values are double
+// Three types of matrices
+//############# Row Matrix ##########################################
+// The most basic type of distributed matrix
+// It has no meaningful row indices being a collection of feature vectors
+// backed by the RDDs of its rows where each row is a local vector
+// Assumes the number of columns is small enough to be stored in a local vector
+// Can be easily created from an instance of RDD[Vector]
+
+import org.apache.spark.rdd.RDD
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
+
+val rows: RDD[Vector] = sc.parallelize(Array(Vectors.dense(1, 2), Vectors.dense(3,4), Vectors.dense(5,6)))
+
+import org.apache.spark.rdd.RDD
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
+rows: org.apache.spark.rdd.RDD[org.apache.spark.mllib.linalg.Vector] = ParallelCollectionRDD[1] at parallelize at <console>:45
+res89: Array[org.apache.spark.mllib.linalg.Vector] = Array([1.0,2.0], [3.0,4.0], [5.0,6.0])
+
+val mat: RowMatrix = new RowMatrix(rows)
+mat: org.apache.spark.mllib.linalg.distributed.RowMatrix = org.apache.spark.mllib.linalg.distributed.RowMatrix@41d507d5
+
+mat.numRows()
+res93: Long = 3
+
+mat.numCols()
+res95: Long = 2
+
+// ################# Indexed Row Matrix #################################
+// Has meaningful row indices that can be used for filtering and joining
+// Backed by RDD of indexed rows where each row is a tuple containg a index (long type) and a "local vector"
+// Easily created by an instance of RDD[IndexedRows]
+// Can be converted to a row matrix by calling toRowMatrix(), it will drop the indices
+import org.apache.spark.mllib.linalg.distributed.{IndexedRow, IndexedRowMatrix, RowMatrix}
+// Creating an RDD[IndexedRow]
+val idxrows: RDD[IndexedRow] = sc.parallelize(Array(IndexedRow(1,Vectors.dense(1, 2)), IndexedRow(2, Vectors.dense(3,4)), IndexedRow(3, Vectors.dense(5,6))))
+
+import org.apache.spark.mllib.linalg.distributed.{IndexedRow, IndexedRowMatrix, RowMatrix}
+idxrows: org.apache.spark.rdd.RDD[org.apache.spark.mllib.linalg.distributed.IndexedRow] = ParallelCollectionRDD[2] at parallelize at <console>:46
+
+idxrows.take(3)
+res109: Array[org.apache.spark.mllib.linalg.distributed.IndexedRow] = Array(IndexedRow(1,[1.0,2.0]), IndexedRow(2,[3.0,4.0]), IndexedRow(3,[5.0,6.0]))
+
+// Creating an IndexedRowMatrix "idxmat" using existing RDD "idxrows"
+val idxmat: IndexedRowMatrix = new IndexedRowMatrix(idxrows)
+idxmat: org.apache.spark.mllib.linalg.distributed.IndexedRowMatrix = org.apache.spark.mllib.linalg.distributed.IndexedRowMatrix@4413d1e5
+
+//################# Coordinate Matrix ################################# 
+// Should be used when both rows and columns are huge and matrix is sparse
+//  Backed by an RDD of matix entries, where each entry is atuple (i: Long, J: Long, Value: Double)
+
+import org.apache.spark.mllib.linalg.distributed.MatrixEntry
+import org.apache.spark.mllib.linalg.distributed.CoordinateMatrix
+
+val entries: RDD[MatrixEntry] = sc.parallelize(Array(MatrixEntry(0,0, 1.0), MatrixEntry(1,1, 2.0), MatrixEntry(2,2, 3.0)))
+val coordmat: CoordinateMatrix = new CoordinateMatrix(entries)
+
+import org.apache.spark.mllib.linalg.distributed.MatrixEntry
+import org.apache.spark.mllib.linalg.distributed.CoordinateMatrix
+entries: org.apache.spark.rdd.RDD[org.apache.spark.mllib.linalg.distributed.MatrixEntry] = ParallelCollectionRDD[5] at parallelize at <console>:74
+coordmat: org.apache.spark.mllib.linalg.distributed.CoordinateMatrix = org.apache.spark.mllib.linalg.distributed.CoordinateMatrix@7f9c9689
+
+// Summary Statistics, Corellation and Random data
+//
+import org.apache.spark.mllib.linalg.{Vector, Vectors}
+import org.apache.spark.mllib.linalg.{Matrix, Matrices}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.mllib.stat.Statistics
+import org.apache.spark.mllib.stat.MultivariateStatisticalSummary
+
+val observations: RDD[Vector] = sc.parallelize(Array(Vectors.dense(1,3,5), Vectors.dense(2,4,6), Vectors.dense(7,8,9)))
+
+import org.apache.spark.mllib.linalg.{Vector, Vectors}
+import org.apache.spark.mllib.linalg.{Matrix, Matrices}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.mllib.stat.Statistics
+import org.apache.spark.mllib.stat.MultivariateStatisticalSummary
+observations: org.apache.spark.rdd.RDD[org.apache.spark.mllib.linalg.Vector] = ParallelCollectionRDD[3] at parallelize at <console>:72
+
+val summary: MultivariateStatisticalSummary = Statistics.colStats(observations)
+summary: org.apache.spark.mllib.stat.MultivariateStatisticalSummary = org.apache.spark.mllib.stat.MultivariateOnlineSummarizer@11f93c96
+
+// statistics are calculated on columns
+summary.mean
+summary.variance
+summary.numNonzeros
+summary.normL1      // sum 
+summary.normL2      // sqrt(sum of squares)
+
+res143: org.apache.spark.mllib.linalg.Vector = [3.333333333333333,5.0,6.666666666666667]
+res144: org.apache.spark.mllib.linalg.Vector = [10.333333333333332,7.0,4.333333333333334]
+res145: org.apache.spark.mllib.linalg.Vector = [3.0,3.0,3.0]
+res146: org.apache.spark.mllib.linalg.Vector = [10.0,15.0,20.0]
+res147: org.apache.spark.mllib.linalg.Vector = [7.3484692283495345,9.433981132056603,11.916375287812984]
+
+// Pairwise Correlation using corr() function in Statistics
+// two methods supported Pearson (Default), Spearman (for ranked variables)
+// two inputes type supported 1) RDD[Double] return a single double value 2) RDD[Vector] returning a correlation matrix
+
+val x: RDD[Double] = sc.parallelize(Array(1,3,5))
+val y: RDD[Double] = sc.parallelize(Array(2,4,6))
+val correlation: Double = Statistics.corr(x, y, "pearson")
+
+x: org.apache.spark.rdd.RDD[Double] = ParallelCollectionRDD[8] at parallelize at <console>:77
+y: org.apache.spark.rdd.RDD[Double] = ParallelCollectionRDD[9] at parallelize at <console>:73
+correlation: Double = 1.0
+
+val data: RDD[Vector] = sc.parallelize(Array(Vectors.dense(1, 2), Vectors.dense(3,4), Vectors.dense(5,6)))
+val correlationMatrix: Matrix = Statistics.corr(data, "pearson")
+
+data: org.apache.spark.rdd.RDD[org.apache.spark.mllib.linalg.Vector] = ParallelCollectionRDD[16] at parallelize at <console>:73
+correlationMatrix: org.apache.spark.mllib.linalg.Matrix = 
+1.0  1.0  
+1.0  1.0  
+
+val correlationMatrix: Matrix = Statistics.corr(data, "spearman")
+correlationMatrix: org.apache.spark.mllib.linalg.Matrix = 
+1.0  1.0  
+1.0  1.0  
+
+// ############### Random Data Generation Using RandomRDD function ######################
+// Six distribution possible : Uniform, Normal, Lognormal, Poission, Exponential and Gamma 
+
+import org.apache.spark.mllib.random.RandomRDDs._
+
+val hundred = poissonRDD(sc, mean = 1.0, size = 100, numPartitions = 2)
+hundred.take(100)
+
+import org.apache.spark.mllib.random.RandomRDDs._
+hundred: org.apache.spark.rdd.RDD[Double] = RandomRDD[32] at RDD at RandomRDD.scala:38
+res206: Array[Double] = Array(1.0, 0.0, 0.0, 1.0, 0.0, 3.0, 0.0, 1.0, 1.0, 3.0, 3.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 3.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 3.0, 1.0, 3.0, 0.0, 0.0, 2.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 3.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 1.0, 2.0, 3.0, 2.0, 3.0, 0.0, 1.0, 0.0, 3.0, 3.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 4.0, 2.0, 0.0, 0.0, 0.0, 2.0, 2.0, 1.0, 1.0, 0.0, 1.0, 0.0)
+
+// creating multivariate normal distribution
+val data1 = normalVectorRDD(sc, numRows = 10000L, numCols = 3, numPartitions = 10)
+val stats = Statistics.colStats(data1)
+stats.mean
+stats.variance
+
+stats: org.apache.spark.mllib.stat.MultivariateStatisticalSummary = org.apache.spark.mllib.stat.MultivariateOnlineSummarizer@7092d424
+res213: org.apache.spark.mllib.linalg.Vector = [0.003221228072972272,-1.4449411772280915E-4,0.001368273100803544]
+res214: org.apache.spark.mllib.linalg.Vector = [0.9822200654361443,0.9915789483509481,1.0173870773925007]
+
+// Summary of dataframes
+
+val sqlcontext = new org.apache.spark.sql.SQLContext(sc)
+import sqlcontext.implicits._ 
+val path_1 = "C:/Users/576902/Downloads/Raw_Data.csv"
+val train_data = sc.textFile(path_1)
+val trainparsedData = train_data.map { line =>
+val parts = line.split(',')
+(parts(20),parts(0),parts(1).toDouble,parts(2),parts(4),parts(5),parts(6).toDouble,parts(7).toDouble,parts(8).toDouble,parts(9).toDouble,parts(10).toDouble,parts(11).toDouble,parts(12).toDouble,parts(13).toDouble,parts(14).toDouble,parts(15).toDouble,parts(16).toDouble,parts(17).toDouble,parts(18).toDouble,parts(19).toDouble) 
+}
+val dataDf=trainparsedData.toDF("labelCat","stateName","accountLength","areaCode","intlPlan","vmailPlan","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+dataDf.show(5)
+
+sqlcontext: org.apache.spark.sql.SQLContext = org.apache.spark.sql.SQLContext@1e16e10e
+import sqlcontext.implicits._
+path_1: String = C:/Users/576902/Downloads/Raw_Data.csv
+train_data: org.apache.spark.rdd.RDD[String] = MapPartitionsRDD[46] at textFile at <console>:105
+trainparsedData: org.apache.spark.rdd.RDD[(String, String, Double, String, String, String, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double)] = MapPartitionsRDD[47] at map at <console>:107
+dataDf: org.apache.spark.sql.DataFrame = [labelCat: string, stateName: string, accountLength: double, areaCode: string, intlPlan: string, vmailPlan: string, vmailMessage: double, dayMins: double, dayCalls: double, dayCharge: double, eveMins: double, eveCalls: double, eveCharge: double, nightMins: double, nightCalls: double, nightCharge: double, intlMins: double, intlCalls: double, intlCharge: double, custServeCalls: double]
++--------+---------+-------------+--------+--------+---------+------------+-------+--------+---------+-------+--------+---------+---------+----------+-----------+--------+---------+----------+--------------+
+|labelCat|stateName|accountLength|areaCode|intlPlan|vmailPlan|vmailMessage|dayMins|dayCalls|dayCharge|eveMins|eveCalls|eveCharge|nightMins|nightCalls|nightCharge|intlMins|intlCalls|intlCharge|custServeCalls|
++--------+---------+-------------+--------+--------+---------+------------+-------+--------+---------+-------+--------+---------+---------+----------+-----------+--------+---------+----------+--------------+
+|  False.|       KS|        128.0|     415|      no|      yes|        25.0|  265.1|   110.0|    45.07|  197.4|    99.0|    16.78|    244.7|      91.0|      11.01|    10.0|      3.0|       2.7|           1.0|
+|  False.|       OH|        107.0|     415|      no|      yes|        26.0|  161.6|   123.0|    27.47|  195.5|   103.0|    16.62|    254.4|     103.0|      11.45|    13.7|      3.0|       3.7|           1.0|
+|  False.|       NJ|        137.0|     415|      no|       no|         0.0|  243.4|   114.0|    41.38|  121.2|   110.0|     10.3|    162.6|     104.0|       7.32|    12.2|      5.0|      3.29|           0.0|
+|  False.|       OH|         84.0|     408|     yes|       no|         0.0|  299.4|    71.0|     50.9|   61.9|    88.0|     5.26|    196.9|      89.0|       8.86|     6.6|      7.0|      1.78|           2.0|
+|  False.|       OK|         75.0|     415|     yes|       no|         0.0|  166.7|   113.0|    28.34|  148.3|   122.0|    12.61|    186.9|     121.0|       8.41|    10.1|      3.0|      2.73|           3.0|
++--------+---------+-------------+--------+--------+---------+------------+-------+--------+---------+-------+--------+---------+---------+----------+-----------+--------+---------+----------+--------------+
+only showing top 5 rows
+
+val summaryDF = dataDf.describe()
+summaryDF.show
+
+summaryDF: org.apache.spark.sql.DataFrame = [summary: string, accountLength: string, vmailMessage: string, dayMins: string, dayCalls: string, dayCharge: string, eveMins: string, eveCalls: string, eveCharge: string, nightMins: string, nightCalls: string, nightCharge: string, intlMins: string, intlCalls: string, intlCharge: string, custServeCalls: string]
++-------+-----------------+------------------+------------------+------------------+-----------------+------------------+-----------------+-----------------+------------------+-----------------+------------------+------------------+-----------------+------------------+------------------+
+|summary|    accountLength|      vmailMessage|           dayMins|          dayCalls|        dayCharge|           eveMins|         eveCalls|        eveCharge|         nightMins|       nightCalls|       nightCharge|          intlMins|        intlCalls|        intlCharge|    custServeCalls|
++-------+-----------------+------------------+------------------+------------------+-----------------+------------------+-----------------+-----------------+------------------+-----------------+------------------+------------------+-----------------+------------------+------------------+
+|  count|             5000|              5000|              5000|              5000|             5000|              5000|             5000|             5000|              5000|             5000|              5000|              5000|             5000|              5000|              5000|
+|   mean|         100.2586|            7.7552|180.28889999999993|          100.0294|30.64966799999995|200.63656000000023|          100.191|17.05432199999998|200.39161999999996|          99.9192| 9.017731999999997|10.261779999999984|           4.4352|2.7711959999999918|            1.5704|
+| stddev|39.69455954726706|13.546393391408023| 53.89469916893225|19.831197415138185|9.162068691639364| 50.55130896756355|19.82649583227953|4.296843300934603| 50.52778925772484|19.95868585824821|2.2737626559293957| 2.761395714644783|2.456788171907444| 0.745513707266033|1.3063633327031972|
+|    min|              1.0|               0.0|               0.0|               0.0|              0.0|               0.0|              0.0|              0.0|               0.0|              0.0|               0.0|               0.0|              0.0|               0.0|               0.0|
+|    max|            243.0|              52.0|             351.5|             165.0|            59.76|             363.7|            170.0|            30.91|             395.0|            175.0|             17.77|              20.0|             20.0|               5.4|               9.0|
++-------+-----------------+------------------+------------------+------------------+-----------------+------------------+-----------------+-----------------+------------------+-----------------+------------------+------------------+-----------------+------------------+------------------+
+
+summaryDF.select("accountLength").map(s => s(0).toString.toDouble).collect()
+res256: Array[Double] = Array(5000.0, 100.2586, 39.69455954726706, 1.0, 243.0)
