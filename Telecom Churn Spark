@@ -1,0 +1,506 @@
+//************************************************************************
+//                          EDA : Mean, Variance, Nonzero
+//************************************************************************
+
+def Get_Mean_Var_NMiss(path_1: String, NumVar : Int){
+import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.mllib.stat.{MultivariateStatisticalSummary, Statistics}
+ 
+val data = sc.textFile(path_1)
+ 
+val parsedData = data.map { line =>
+val parts = line.split(',')
+(Vectors.dense(parts(NumVar).toDouble))
+}
+// Compute column summary statistics.
+val summary: MultivariateStatisticalSummary = Statistics.colStats(parsedData)
+println("Mean of Variable is " + summary.mean)  // a dense vector containing the mean value for each column
+println("Variance of Variable is " + summary.variance)  // column-wise variance
+println("Variable has " + summary.numNonzeros + " Non Zero entries")  // number of nonzeros in each column
+}
+//************************************************************************
+//                           Correlation
+//************************************************************************
+def Get_Corr(path_1: String, NumVar1 : Int, NumVar2 : Int){
+import org.apache.spark.mllib.linalg._
+import org.apache.spark.mllib.stat.Statistics
+import org.apache.spark.rdd.RDD
+
+val datar = sc.textFile(path_1)
+ 
+val seriesX: RDD[Double] = datar.map { line =>
+val parts = line.split(',')
+parts(NumVar1).toDouble
+}
+val seriesY: RDD[Double] = datar.map { line =>
+val parts = line.split(',')
+parts(NumVar2).toDouble
+}
+// compute the correlation using Pearson's method. Enter "spearman" for Spearman's method. If a
+// method is not specified, Pearson's method will be used by default.
+val correlation: Double = Statistics.corr(seriesX, seriesY, "pearson")
+println(s"Correlation is: $correlation")
+}
+//************************************************************************
+//                 variable Importance
+//************************************************************************
+def FeatureImportance(path_1: String) = {
+import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.classification.{RandomForestClassificationModel, RandomForestClassifier}
+import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
+import org.apache.spark.ml.feature.{IndexToString, StringIndexer, VectorIndexer,VectorAssembler}
+import org.apache.spark.ml.classification.{GBTClassificationModel, GBTClassifier}
+import org.apache.spark.ml.classification.DecisionTreeClassifier
+
+val train_data = sc.textFile(path_1)
+// reading training data and saving to parsedData
+val parsedData = train_data.map { line =>
+val parts = line.split(',')
+(parts(20),parts(0),parts(1).toDouble,parts(2),parts(4),parts(5),parts(6).toDouble,parts(7).toDouble,parts(8).toDouble,parts(9).toDouble,parts(10).toDouble,parts(11).toDouble,parts(12).toDouble,parts(13).toDouble,parts(14).toDouble,parts(15).toDouble,parts(16).toDouble,parts(17).toDouble,parts(18).toDouble,parts(19).toDouble) 
+}
+//  creating DF
+val dataDf=parsedData.toDF("labelCat","stateName","accountLength","areaCode","intlPlan","vmailPlan","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+//  dividing into tets and train
+val Array(trainingData, testData) = dataDf.randomSplit(Array(0.7, 0.3) ,seed = 13L)
+
+//Build Individual Components for the Pipeline
+val categoricalFeatColNames = Seq("stateName","areaCode","intlPlan","vmailPlan")
+val stringIndexers = categoricalFeatColNames.map { colName =>
+  new StringIndexer()
+  .setInputCol(colName)
+  .setOutputCol(colName + "Indexed")
+  .fit(dataDf)
+}
+//Label Indexer for the Y variable
+val labelIndexer = new StringIndexer().setInputCol("labelCat").setOutputCol("churnIndexed").fit(dataDf)
+
+val numericFeatColNames = Seq("accountLength","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+val idxdCategoricalFeatColName = categoricalFeatColNames.map(_ + "Indexed")
+val allIdxdFeatColNames = numericFeatColNames ++ idxdCategoricalFeatColName
+val assembler = new VectorAssembler().setInputCols(Array(allIdxdFeatColNames: _*)).setOutputCol("Features")
+val labelConverter = new IndexToString().setInputCol("prediction").setOutputCol("predictedLabel").setLabels(labelIndexer.labels)
+
+// in "".setNumTrees(bestDepth)" changed 10 to maxdepth i.e. optimal # of trees
+val rf = new RandomForestClassifier().setMaxBins(52).setLabelCol("churnIndexed").setFeaturesCol("Features").setNumTrees(7)
+val pipeline = new Pipeline().setStages(Array.concat(stringIndexers.toArray,Array(labelIndexer, assembler, rf, labelConverter)))
+val model = pipeline.fit(trainingData)
+val testpredictions = model.transform(testData)
+val trainpredictions = model.transform(trainingData)
+
+// model.stages.foreach(println)
+val rfObject = model.stages(6).asInstanceOf[RandomForestClassificationModel]
+// println(rfObject)
+var importanceVector =  rfObject.featureImportances
+importanceVector
+
+importanceVector.toArray.zipWithIndex.map(_.swap).sortBy(-_._2).foreach(x => println(x._1 + " -> " + x._2))
+
+}
+//************************************************************************
+//                           Logistic Regression
+//************************************************************************
+//LR Function
+
+def runLogisticModel(path_1: String, path_2: String) = {
+import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.classification.{RandomForestClassificationModel, RandomForestClassifier}
+import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
+import org.apache.spark.ml.feature.{StringIndexer, VectorIndexer}
+import org.apache.spark.ml.feature.{IndexToString, StringIndexer, VectorIndexer,VectorAssembler}
+import org.apache.spark.ml.classification.{GBTClassificationModel, GBTClassifier}
+import org.apache.spark.ml.classification.LogisticRegression
+
+val train_data = sc.textFile(path_1)
+if(path_2==" "){
+    val val_data = sc.textFile(path_1)
+    println("Note: Validation data is missing, Entire data will be used as validation data.")
+}
+     val val_data = sc.textFile(path_1)
+
+
+//Data Engineering and Preprocessing on train_data
+val trainparsedData = train_data.map { line =>
+val parts = line.split(',')
+(parts(20),parts(0),parts(1).toDouble,parts(2),parts(4),parts(5),parts(6).toDouble,parts(7).toDouble,parts(8).toDouble,parts(9).toDouble,parts(10).toDouble,parts(11).toDouble,parts(12).toDouble,parts(13).toDouble,parts(14).toDouble,parts(15).toDouble,parts(16).toDouble,parts(17).toDouble,parts(18).toDouble,parts(19).toDouble) 
+}
+val dataDf=trainparsedData.toDF("labelCat","stateName","accountLength","areaCode","intlPlan","vmailPlan","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+val Array(trainingData, testData) = dataDf.randomSplit(Array(0.7, 0.3) ,seed = 13L)
+
+//Build Individual Components for the Pipeline
+val categoricalFeatColNames = Seq("stateName","areaCode","intlPlan","vmailPlan")
+val stringIndexers = categoricalFeatColNames.map { colName =>
+  new StringIndexer()
+  .setInputCol(colName)
+  .setOutputCol(colName + "Indexed")
+  .fit(dataDf)
+}
+//Label Indexer for the Y variable
+val labelIndexer = new StringIndexer().setInputCol("labelCat").setOutputCol("churnIndexed").fit(dataDf)
+
+val numericFeatColNames = Seq("accountLength","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+val idxdCategoricalFeatColName = categoricalFeatColNames.map(_ + "Indexed")
+val allIdxdFeatColNames = numericFeatColNames ++ idxdCategoricalFeatColName
+val assembler = new VectorAssembler().setInputCols(Array(allIdxdFeatColNames: _*)).setOutputCol("Features")
+val labelConverter = new IndexToString().setInputCol("prediction").setOutputCol("predictedLabel").setLabels(labelIndexer.labels)
+
+//Data Engineering and Preprocessing on val_data
+val valparsedData = val_data.map { line =>
+val parts = line.split(',')
+(parts(20),parts(0),parts(1).toDouble,parts(2),parts(4),parts(5),parts(6).toDouble,parts(7).toDouble,parts(8).toDouble,parts(9).toDouble,parts(10).toDouble,parts(11).toDouble,parts(12).toDouble,parts(13).toDouble,parts(14).toDouble,parts(15).toDouble,parts(16).toDouble,parts(17).toDouble,parts(18).toDouble,parts(19).toDouble) 
+}
+val valdataDf=valparsedData.toDF("labelCat","stateName","accountLength","areaCode","intlPlan","vmailPlan","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+// building lr model
+val lr = new LogisticRegression().setMaxIter(10).setRegParam(0.01).setLabelCol("churnIndexed").setFeaturesCol("Features")
+val pipeline = new Pipeline().setStages(Array.concat(stringIndexers.toArray,Array(labelIndexer, assembler, lr, labelConverter)))
+val model = pipeline.fit(trainingData)
+
+//model prediction on train, test and validation data
+val testpredictions = model.transform(testData)
+val valpredictions = model.transform(valdataDf)
+// valpredictions.take(5)
+// valpredictions.rdd.saveAsTextFile("C:/Users/576902/Downloads/ValPredLog")
+val trainpredictions= model.transform(trainingData)
+// Select (prediction, true label) and compute test error.
+val evaluator = new MulticlassClassificationEvaluator().setLabelCol("churnIndexed").setPredictionCol("prediction").setMetricName("f1")
+
+val testaccuracy = evaluator.evaluate(testpredictions)
+val valaccuracy = evaluator.evaluate(valpredictions)
+val trainaccuracy = evaluator.evaluate(trainpredictions)
+
+println("################# Logistic Regression Model Accuracy #################")
+println("Train accuracy = " + trainaccuracy)
+println("Test accuracy = " + testaccuracy)
+println("Validation accuracy = " + valaccuracy)
+println("################# Logistic Regression Model Error ####################")
+println("Train Error = " + (1.0 - trainaccuracy))
+println("Test Error = " + (1.0 - testaccuracy))
+println("Test Error = " + (1.0 - valaccuracy))
+
+// val lr_accuracy=testaccuracy
+// lr_accuracy
+}
+//************************************************************************
+//                           Decision Tree
+//************************************************************************
+def runDecisionModel(path_1: String, path_2: String) = {
+import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.classification.{RandomForestClassificationModel, RandomForestClassifier}
+import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
+import org.apache.spark.ml.feature.{IndexToString, StringIndexer, VectorIndexer,VectorAssembler}
+import org.apache.spark.ml.classification.{GBTClassificationModel, GBTClassifier}
+import org.apache.spark.ml.classification.DecisionTreeClassifier
+
+
+val traindata = sc.textFile(path_1)
+// reading training data
+val trainparsedData = traindata.map { line =>
+val parts = line.split(',')
+(parts(20),parts(0),parts(1).toDouble,parts(2),parts(4),parts(5),parts(6).toDouble,parts(7).toDouble,parts(8).toDouble,parts(9).toDouble,parts(10).toDouble,parts(11).toDouble,parts(12).toDouble,parts(13).toDouble,parts(14).toDouble,parts(15).toDouble,parts(16).toDouble,parts(17).toDouble,parts(18).toDouble,parts(19).toDouble) 
+}
+
+val dataDf=trainparsedData.toDF("labelCat","stateName","accountLength","areaCode","intlPlan","vmailPlan","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+
+val Array(trainingData, testData) = dataDf.randomSplit(Array(0.7, 0.3) ,seed = 13L)
+
+//Build Individual Components for the Pipeline
+val categoricalFeatColNames = Seq("stateName","areaCode","intlPlan","vmailPlan")
+val stringIndexers = categoricalFeatColNames.map { colName =>
+  new StringIndexer()
+  .setInputCol(colName)
+  .setOutputCol(colName + "Indexed")
+  .fit(dataDf)
+}
+//Label Indexer for the Y variable
+val labelIndexer = new StringIndexer().setInputCol("labelCat").setOutputCol("churnIndexed").fit(dataDf)
+val numericFeatColNames = Seq("accountLength","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+val idxdCategoricalFeatColName = categoricalFeatColNames.map(_ + "Indexed")
+val allIdxdFeatColNames = numericFeatColNames ++ idxdCategoricalFeatColName
+val assembler = new VectorAssembler().setInputCols(Array(allIdxdFeatColNames: _*)).setOutputCol("Features")
+val labelConverter = new IndexToString().setInputCol("prediction").setOutputCol("predictedLabel").setLabels(labelIndexer.labels)
+
+// reading validation data data
+if(path_2==" "){
+    val valdata = sc.textFile(path_1) 
+    println("Note: Validation data is missing, Entire Train data will be used as validation data ")
+    
+} 
+val valdata = sc.textFile(path_1)   
+val valparsedData = valdata.map { line =>
+val parts = line.split(',')
+(parts(20),parts(0),parts(1).toDouble,parts(2),parts(4),parts(5),parts(6).toDouble,parts(7).toDouble,parts(8).toDouble,parts(9).toDouble,parts(10).toDouble,parts(11).toDouble,parts(12).toDouble,parts(13).toDouble,parts(14).toDouble,parts(15).toDouble,parts(16).toDouble,parts(17).toDouble,parts(18).toDouble,parts(19).toDouble) 
+}
+val valdataDf=valparsedData.toDF("labelCat","stateName","accountLength","areaCode","intlPlan","vmailPlan","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+
+
+//Tuning
+val maxDepth = List(5,6,7,8,9,10,11,12,13,14,15)
+var bestValidationRmse = 0.00
+var bestDepth = 0
+for (depth <- maxDepth) {
+  val dt = new DecisionTreeClassifier().setMaxBins(52).setMaxDepth(depth).setLabelCol("churnIndexed").setFeaturesCol("Features")
+    val pipeline = new Pipeline().setStages(Array.concat(stringIndexers.toArray,Array(labelIndexer, assembler, dt, labelConverter)))
+    val model = pipeline.fit(trainingData)
+    val predictions = model.transform(testData)
+    // Select (prediction, true label) and compute test error.
+    val evaluator = new MulticlassClassificationEvaluator().setLabelCol("churnIndexed").setPredictionCol("prediction").setMetricName("f1")
+    val accuracy = evaluator.evaluate(predictions)
+  if (accuracy > bestValidationRmse) {
+    bestValidationRmse = accuracy
+    bestDepth = depth
+  }
+//   println("Depth " + depth + "Accuracy " + accuracy  )
+}
+
+println("Best Depth: The best model was trained with Depth = " + bestDepth )
+// bestValidationRmse
+
+// decision tree model at best depth
+val dt = new DecisionTreeClassifier().setMaxBins(52).setMaxDepth(bestDepth).setLabelCol("churnIndexed").setFeaturesCol("Features")
+val pipeline = new Pipeline().setStages(Array.concat(stringIndexers.toArray,Array(labelIndexer, assembler, dt, labelConverter)))
+val model = pipeline.fit(trainingData)
+
+// model accuracies
+val trainpredictions = model.transform(trainingData)
+val testpredictions = model.transform(testData)
+val valpredictions = model.transform(valdataDf)
+
+// Select (prediction, true label) and compute test error.
+val evaluator = new MulticlassClassificationEvaluator().setLabelCol("churnIndexed").setPredictionCol("prediction").setMetricName("f1")
+
+val trainaccuracy = evaluator.evaluate(trainpredictions)
+val testaccuracy = evaluator.evaluate(testpredictions)
+val valaccuracy = evaluator.evaluate(valpredictions)
+
+println("################# Decision Tree Accuracy at Best depth #################")
+println("Train accuracy = " + trainaccuracy)
+println("Test accuracy = " + testaccuracy)
+println("Validation accuracy = " + valaccuracy)
+println("################# Decision Tree Error At best Depth####################")
+println("Train Error = " + (1.0 - trainaccuracy))
+println("Test Error = " + (1.0 - testaccuracy))
+println("Val Error = " + (1.0 - valaccuracy))
+
+}
+//************************************************************************
+//                           Random Forest
+//************************************************************************
+def runRandomForest(path_1: String,path_2: String) = {
+import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.classification.{RandomForestClassificationModel, RandomForestClassifier}
+import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
+import org.apache.spark.ml.feature.{IndexToString, StringIndexer, VectorIndexer,VectorAssembler}
+import org.apache.spark.ml.classification.{GBTClassificationModel, GBTClassifier}
+import org.apache.spark.ml.classification.DecisionTreeClassifier
+
+val train_data = sc.textFile(path_1)
+// reading training data and saving to parsedData
+val parsedData = train_data.map { line =>
+val parts = line.split(',')
+(parts(20),parts(0),parts(1).toDouble,parts(2),parts(4),parts(5),parts(6).toDouble,parts(7).toDouble,parts(8).toDouble,parts(9).toDouble,parts(10).toDouble,parts(11).toDouble,parts(12).toDouble,parts(13).toDouble,parts(14).toDouble,parts(15).toDouble,parts(16).toDouble,parts(17).toDouble,parts(18).toDouble,parts(19).toDouble) 
+}
+//  creating DF
+val dataDf=parsedData.toDF("labelCat","stateName","accountLength","areaCode","intlPlan","vmailPlan","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+//  dividing into tets and train
+val Array(trainingData, testData) = dataDf.randomSplit(Array(0.7, 0.3) ,seed = 13L)
+
+//Build Individual Components for the Pipeline
+val categoricalFeatColNames = Seq("stateName","areaCode","intlPlan","vmailPlan")
+val stringIndexers = categoricalFeatColNames.map { colName =>
+  new StringIndexer()
+  .setInputCol(colName)
+  .setOutputCol(colName + "Indexed")
+  .fit(dataDf)
+}
+//Label Indexer for the Y variable
+val labelIndexer = new StringIndexer().setInputCol("labelCat").setOutputCol("churnIndexed").fit(dataDf)
+val numericFeatColNames = Seq("accountLength","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+val idxdCategoricalFeatColName = categoricalFeatColNames.map(_ + "Indexed")
+val allIdxdFeatColNames = numericFeatColNames ++ idxdCategoricalFeatColName
+val assembler = new VectorAssembler().setInputCols(Array(allIdxdFeatColNames: _*)).setOutputCol("Features")
+val labelConverter = new IndexToString().setInputCol("prediction").setOutputCol("predictedLabel").setLabels(labelIndexer.labels)
+
+
+//Tuning
+val maxDepth = List(5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,16,17,18,19,20,21,22,23,24,25)
+var bestValidationRmse = 0.00
+var bestDepth = 0
+for (iter <- maxDepth) {
+  val rf = new RandomForestClassifier().setMaxBins(52).setLabelCol("churnIndexed").setFeaturesCol("Features").setNumTrees(iter)
+    val pipeline = new Pipeline().setStages(Array.concat(stringIndexers.toArray,Array(labelIndexer, assembler, rf, labelConverter)))
+    val model = pipeline.fit(trainingData)
+    
+    val predictions = model.transform(testData)
+    
+    // Select (prediction, true label) and compute test error.
+    val evaluator = new MulticlassClassificationEvaluator().setLabelCol("churnIndexed").setPredictionCol("prediction").setMetricName("f1")
+    val accuracy = evaluator.evaluate(predictions)
+    // println("Depth " + iter + "Accuracy " + accuracy )
+  
+  if (accuracy > bestValidationRmse) {
+    bestValidationRmse = accuracy
+    bestDepth = iter
+  }
+ 
+}
+println("Best Depth: The best model was trained with Depth = " + bestDepth )
+
+// reading validation data
+if(path_2==" "){
+    path_2 == path_1
+    println("Note: Validation data is missing, Entire Train data will be used as validation data ")
+    
+} 
+// reading validation data and saving to parsedDataVal
+val val_data = sc.textFile(path_1)
+val parsedDataVal = val_data.map { line =>
+val parts = line.split(',')
+(parts(20),parts(0),parts(1).toDouble,parts(2),parts(4),parts(5),parts(6).toDouble,parts(7).toDouble,parts(8).toDouble,parts(9).toDouble,parts(10).toDouble,parts(11).toDouble,parts(12).toDouble,parts(13).toDouble,parts(14).toDouble,parts(15).toDouble,parts(16).toDouble,parts(17).toDouble,parts(18).toDouble,parts(19).toDouble) 
+}
+//  creating DF for val_data
+val dataDfVal=parsedDataVal.toDF("labelCat","stateName","accountLength","areaCode","intlPlan","vmailPlan","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+
+// in "".setNumTrees(bestDepth)" changed 10 to maxdepth i.e. optimal # of trees
+val rf = new RandomForestClassifier().setMaxBins(52).setLabelCol("churnIndexed").setFeaturesCol("Features").setNumTrees(bestDepth)
+val pipeline = new Pipeline().setStages(Array.concat(stringIndexers.toArray,Array(labelIndexer, assembler, rf, labelConverter)))
+val model = pipeline.fit(trainingData)
+val testpredictions = model.transform(testData)
+val trainpredictions = model.transform(trainingData)
+val valpredictions = model.transform(dataDfVal)
+
+// Select (prediction, true label) and compute test error.
+val evaluator = new MulticlassClassificationEvaluator().setLabelCol("churnIndexed").setPredictionCol("prediction").setMetricName("f1")
+val testaccuracy = evaluator.evaluate(testpredictions)
+val trainaccuracy= evaluator.evaluate(trainpredictions)
+val valaccuracy= evaluator.evaluate(valpredictions)
+
+println("################# Random Forest Accuracy (Tuned) #################")
+println("Train accuracy = " + trainaccuracy)
+println("Test accuracy = " + testaccuracy)
+println("Validation accuracy = " + valaccuracy)
+println("################# Random Forest Error (Tuned)####################")
+println("Train Error = " + (1.0 - trainaccuracy))
+println("Test Error = " + (1.0 - testaccuracy))
+println("Val Error = " + (1.0 - valaccuracy))
+
+}
+//************************************************************************
+//                  XGB Model
+//************************************************************************
+
+def runXGB(path_1: String,path_2: String) = {
+
+import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.classification.{RandomForestClassificationModel, RandomForestClassifier}
+import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
+import org.apache.spark.ml.feature.{IndexToString, StringIndexer, VectorIndexer,VectorAssembler}
+import org.apache.spark.ml.classification.{GBTClassificationModel, GBTClassifier}
+import org.apache.spark.ml.classification.DecisionTreeClassifier
+
+val train_data = sc.textFile(path_1)
+// reading training data and saving to parsedData
+val parsedData = train_data.map { line =>
+val parts = line.split(',')
+(parts(20),parts(0),parts(1).toDouble,parts(2),parts(4),parts(5),parts(6).toDouble,parts(7).toDouble,parts(8).toDouble,parts(9).toDouble,parts(10).toDouble,parts(11).toDouble,parts(12).toDouble,parts(13).toDouble,parts(14).toDouble,parts(15).toDouble,parts(16).toDouble,parts(17).toDouble,parts(18).toDouble,parts(19).toDouble) 
+}
+//  creating DF
+val dataDf=parsedData.toDF("labelCat","stateName","accountLength","areaCode","intlPlan","vmailPlan","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+//  dividing into tets and train
+val Array(trainingData, testData) = dataDf.randomSplit(Array(0.7, 0.3) ,seed = 13L)
+
+//Build Individual Components for the Pipeline
+val categoricalFeatColNames = Seq("stateName","areaCode","intlPlan","vmailPlan")
+val stringIndexers = categoricalFeatColNames.map { colName =>
+  new StringIndexer()
+  .setInputCol(colName)
+  .setOutputCol(colName + "Indexed")
+  .fit(dataDf)
+}
+
+//Label Indexer for the Y variable
+val labelIndexer = new StringIndexer().setInputCol("labelCat").setOutputCol("churnIndexed").fit(dataDf)
+
+val numericFeatColNames = Seq("accountLength","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+val idxdCategoricalFeatColName = categoricalFeatColNames.map(_ + "Indexed")
+val allIdxdFeatColNames = numericFeatColNames ++ idxdCategoricalFeatColName
+val assembler = new VectorAssembler().setInputCols(Array(allIdxdFeatColNames: _*)).setOutputCol("Features")
+val labelConverter = new IndexToString().setInputCol("prediction").setOutputCol("predictedLabel").setLabels(labelIndexer.labels)
+
+
+
+// Tuning
+
+val maxDepth = List(31,32,33,34,35,36,37,38,39,40)
+var bestValidationRmse = 0.00
+var bestDepth = 0
+for (iter <- maxDepth) {
+  val gbt = new GBTClassifier().setMaxBins(52).setLabelCol("churnIndexed").setFeaturesCol("Features").setMaxIter(iter)
+    val pipeline = new Pipeline().setStages(Array.concat(stringIndexers.toArray,Array(labelIndexer, assembler, gbt, labelConverter)))
+    val model = pipeline.fit(trainingData)
+    
+    val predictions = model.transform(testData)
+    
+    
+    // Select (prediction, true label) and compute test error.
+    val evaluator = new MulticlassClassificationEvaluator().setLabelCol("churnIndexed").setPredictionCol("prediction").setMetricName("f1")
+    val accuracy = evaluator.evaluate(predictions)
+  if (accuracy > bestValidationRmse) {
+    bestValidationRmse = accuracy
+    bestDepth = iter
+  }
+//println("The  model was trained with Iteration = " + iter + " and its accuracy was " + accuracy )
+}
+println("Best Depth: The best model was trained with Depth = " + bestDepth )
+
+
+
+if(path_2==" "){
+    path_2 == path_1
+    println("Note: Validation data is missing, Entire Train data will be used as validation data ")
+    
+} 
+// reading validation data and saving to parsedDataVal
+val val_data = sc.textFile(path_1)
+val parsedDataVal = val_data.map { line =>
+val parts = line.split(',')
+(parts(20),parts(0),parts(1).toDouble,parts(2),parts(4),parts(5),parts(6).toDouble,parts(7).toDouble,parts(8).toDouble,parts(9).toDouble,parts(10).toDouble,parts(11).toDouble,parts(12).toDouble,parts(13).toDouble,parts(14).toDouble,parts(15).toDouble,parts(16).toDouble,parts(17).toDouble,parts(18).toDouble,parts(19).toDouble) 
+}
+//  creating DF for val_data
+val dataDfVal=parsedDataVal.toDF("labelCat","stateName","accountLength","areaCode","intlPlan","vmailPlan","vmailMessage","dayMins","dayCalls","dayCharge","eveMins","eveCalls","eveCharge","nightMins","nightCalls","nightCharge","intlMins","intlCalls","intlCharge","custServeCalls")
+
+// model building
+val gbt = new GBTClassifier().setMaxBins(52).setLabelCol("churnIndexed").setFeaturesCol("Features").setMaxIter(bestDepth)
+val pipeline = new Pipeline().setStages(Array.concat(stringIndexers.toArray,Array(labelIndexer, assembler, gbt, labelConverter)))
+val model = pipeline.fit(trainingData)
+
+val testpredictions = model.transform(testData)
+val trainpredictions = model.transform(trainingData)
+val valpredictions = model.transform(dataDfVal)
+
+// Select (prediction, true label) and compute test error.
+val evaluator = new MulticlassClassificationEvaluator().setLabelCol("churnIndexed").setPredictionCol("prediction").setMetricName("f1")
+val testaccuracy = evaluator.evaluate(testpredictions)
+val trainaccuracy= evaluator.evaluate(trainpredictions)
+val valaccuracy= evaluator.evaluate(valpredictions)
+
+println("################# XGB Accuracy (Tuned) #################")
+println("Train accuracy = " + trainaccuracy)
+println("Test accuracy = " + testaccuracy)
+println("Validation accuracy = " + valaccuracy)
+println("################# XGB Error (Tuned)####################")
+println("Train Error = " + (1.0 - trainaccuracy))
+println("Test Error = " + (1.0 - testaccuracy))
+println("Val Error = " + (1.0 - valaccuracy))
+
+}
+
+//************************************************************************
+//                  Model Comparison
+//************************************************************************
+def compareModels(path_1: String, path_2: String)={
+   FeatureImportance(path_1)  
+   runLogisticModel(path_1, path_2)
+   runDecisionModel(path_1, path_2)
+   runRandomForest(path_1, path_2)
+   runXGB(path_1, path_2)
+}
+compareModels()
